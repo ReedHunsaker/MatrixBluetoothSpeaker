@@ -3,6 +3,13 @@
 
 BluetoothA2DPSink a2dp_sink;
 
+// void read_data_stream(const uint8_t *data, uint32_t length)
+// {
+//   int16_t *samples = (int16_t*) data;
+//   uint32_t sample_count = length/2;
+//   // Do something with the data packet
+// }
+
 void setup() {
   // put your setup code here, to run once:
   static const i2s_config_t i2s_config = {
@@ -16,10 +23,16 @@ void setup() {
         .dma_buf_len = 64,
         .use_apll = false
     };
-
+  i2s_pin_config_t my_pin_config = {
+        .bck_io_num = 26,
+        .ws_io_num = 25,
+        .data_out_num = 22,
+        .data_in_num = I2S_PIN_NO_CHANGE
+    };
+    a2dp_sink.set_pin_config(my_pin_config);
     a2dp_sink.set_i2s_config(i2s_config);
     a2dp_sink.start("TheMatrix");
-
+    // a2dp_sink.set_stream_reader(read_data_stream);
 }
 
 void loop() {

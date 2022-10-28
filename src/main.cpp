@@ -115,6 +115,7 @@ void loop() {
   FFT.Compute(vReal, vImag, FFTsamples, FFT_FORWARD);
   FFT.ComplexToMagnitude(vReal, vImag, FFTsamples);
   display.clearDisplay();
+//   split into bins
   for(int i = 2; i < (FFTsamples/2); i++)
   {
      // Each array element represents a frequency and its value, is the amplitude. Note the frequencies are not discrete.

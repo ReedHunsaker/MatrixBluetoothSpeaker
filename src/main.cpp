@@ -5,7 +5,7 @@
 #include <Adafruit_SSD1306.h>
 #include <arduinoFFT.h>
 #include "BluetoothA2DPSink.h"
-
+#include <map>
 
 BluetoothA2DPSink a2dp_sink;
 
@@ -26,26 +26,40 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 /*FFT*/
 arduinoFFT FFT = arduinoFFT(); /* Create FFT object */
 
-const uint16_t FFTsamples = 512; //This value MUST ALWAYS be a power of 2
+const uint16_t FFTsamples = 1024; //This value MUST ALWAYS be a power of 2
 const double signalFrequency = 1000;
 const double samplingFrequency = 5000;
-const uint8_t amplitude = 175;
+// rows of the matrix
+const int rows = 4;
+// 256 = 1024 (samples) / 4(rows)
+const int amplitude = 256;
 
 double vReal[FFTsamples];
 double vImag[FFTsamples];
 
+// the peak in a given column update for 4x4x4 or 8x8x8x
 byte peak[] = {0,0,0,0,0,0,0,0};
 int16_t sample_l_int;
 int16_t sample_r_int;
 /*****/
 
+// pin mapping
+// column to pin
+std::map<int, int> pinMap = {
+    {0, 18},
+    {1, 19}
+};
+
 /******Matrix Control******/
-void displayBand(int band, int dsize){
-  int dmax = 50;
+// display music
+// -param1 column (int): Numbered column -TODO: mapped to a pin
+// -param2 dsize (int): FFT information (snapshot of frequency)
+void displayBand(int column, int dsize){
   dsize /= amplitude;
-  if (dsize > dmax) dsize = dmax;
-  for (int s = 0; s <= dsize; s=s+2){display.drawFastHLine(1+10*band,64-s, 8, WHITE);}
-  if (dsize > peak[band]) {peak[band] = dsize;}
+  if (dsize > rows) dsize = rows;
+//   in loop ight up row for column and row 
+  for (int s = 0; s <= dsize; s=s+2){display.drawFastHLine(1+10*column,64-s, 8, WHITE);}
+  if (dsize > peak[column]) {peak[column] = dsize;}
 }
 /************************/
 

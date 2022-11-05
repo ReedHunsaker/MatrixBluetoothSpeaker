@@ -5,7 +5,6 @@
 #include <Adafruit_SSD1306.h>
 #include <arduinoFFT.h>
 #include "BluetoothA2DPSink.h"
-#include <map>
 
 BluetoothA2DPSink a2dp_sink;
 
@@ -17,6 +16,10 @@ BluetoothA2DPSink a2dp_sink;
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
+
+#define SLICE 8
+#define ROWS 8
+#define COLUMNS 64
 
 // Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
@@ -30,33 +33,90 @@ const uint16_t FFTsamples = 1024; //This value MUST ALWAYS be a power of 2
 const double signalFrequency = 1000;
 const double samplingFrequency = 5000;
 // rows of the matrix
-const int rows = 4;
+
 // 256 = 1024 (samples) / 4(rows)
 const int amplitude = 256;
 
 double vReal[FFTsamples];
 double vImag[FFTsamples];
 
-// the peak in a given column update for 4x4x4 or 8x8x8x
-byte peak[] = {0,0,0,0,0,0,0,0};
+// the peak in a given column update for 4x4x4 or 8x8x8
+byte peak[COLUMNS] = { 0 };
+byte red[COLUMNS] = { 0 };
+byte green[COLUMNS] = { 0 };
+byte blue[COLUMNS] = { 0 };
+byte levels[ROWS] = { 0 };
 int16_t sample_l_int;
 int16_t sample_r_int;
 /*****/
 
-// pin mapping
-// column to pin
-std::map<int, int> pinMap = {
-    {0, 18},
-    {1, 19}
-};
-
+// 3pins
+// data
+// Each
+// row
+// column
+// blank both
+// set column pattern
+// set rows
+// clock
+// latch
 /******Matrix Control******/
 // display music
 // -param1 column (int): Numbered column -TODO: mapped to a pin
 // -param2 dsize (int): FFT information (snapshot of frequency)
+
+void firstAnimation(){
+  byte firstAnimation[SLICE][COLUMNS] = { { 0 } };
+  firstAnimation[1][0] = 1;
+  firstAnimation[1][3] = 1;
+  firstAnimation[1][5] = 1;
+  firstAnimation[1][6] = 1;
+  firstAnimation[1][7] = 1;
+
+  firstAnimation[2][0] = 1;
+  firstAnimation[2][3] = 1;
+  firstAnimation[2][6] = 1;
+
+  firstAnimation[3][0] = 1;
+  firstAnimation[3][3] = 1;
+  firstAnimation[3][6] = 1;
+
+  firstAnimation[4][0] = 1;
+  firstAnimation[4][1] = 1;
+  firstAnimation[4][2] = 1;
+  firstAnimation[4][3] = 1;
+  firstAnimation[4][6] = 1;
+
+  firstAnimation[5][0] = 1;
+  firstAnimation[5][3] = 1;
+  firstAnimation[5][6] = 1;
+
+  firstAnimation[6][0] = 1;
+  firstAnimation[6][3] = 1;
+  firstAnimation[6][6] = 1;
+
+  firstAnimation[7][0] = 1;
+  firstAnimation[7][3] = 1;
+  firstAnimation[7][5] = 1;
+  firstAnimation[7][6] = 1;
+  firstAnimation[7][7] = 1;
+
+}
+
+
+void output() { }
+
+void clearAll() {
+  for(int i = 0; i < COLUMNS; i++) {
+    if (i < ROWS) levels[i] = 0;
+    red[i], blue[i], green[i] = 0;
+  }
+  output();
+}
+
 void displayBand(int column, int dsize){
   dsize /= amplitude;
-  if (dsize > rows) dsize = rows;
+  if (dsize > ROWS) dsize = ROWS;
 //   in loop ight up row for column and row 
   for (int s = 0; s <= dsize; s=s+2){display.drawFastHLine(1+10*column,64-s, 8, WHITE);}
   if (dsize > peak[column]) {peak[column] = dsize;}

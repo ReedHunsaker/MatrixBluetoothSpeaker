@@ -65,6 +65,63 @@ int16_t sample_r_int;
 // -param1 column (int): Numbered column -TODO: mapped to a pin
 // -param2 dsize (int): FFT information (snapshot of frequency)
 
+// three pins
+// clk
+// latch
+// dataPin - shift out
+
+void outputAnimation() {
+  // the left most bit is shifted out first
+  // shifts out one byte at a time
+  // Will need two bytes per shift register
+  // 8 rows + (64 columns * 3 colors) = 200 / 8bit numbers = 25
+  // 25 8 bit numbers shifts out 
+  // 25 / 2
+  // 13 shift registors
+  // common latch and clock
+  // audrino code handles latch
+
+
+
+  // shiftOut
+}
+
+void mapAnimation(byte* animation){
+  // seperate animation into 64 Uint_8 numbers
+  // farthest left is first
+
+  int row;
+  int column;
+
+  uint32_t word1 = 0x0;
+  uint32_t word2 = 0x0;
+
+  for (row = 0; row < 8; row ++) {
+    for (column = 0; column < 64; column ++) {
+      if (column < 31) word1 << animation[row][column];
+      else word2 << animation[row][column];
+    }
+    // word 1 and 2
+    shiftOut_Matrix();
+    shiftOut_Matrix();
+  }
+}
+
+void shiftOut_Matrix(uint8_t dataPin, uint8_t clockPin, uint8_t bitOrder, uint32_t val)
+{
+      uint8_t i;
+
+      for (i = 0; i < 32; i++)  {
+            if (bitOrder == LSBFIRST)
+                  digitalWrite(dataPin, !!(val & (1 << i)));
+            else      
+                  digitalWrite(dataPin, !!(val & (1 << (31 - i))));
+                  
+            digitalWrite(clockPin, HIGH);
+            digitalWrite(clockPin, LOW);            
+      }
+}
+
 void firstAnimation(){
   byte firstAnimation[SLICE][COLUMNS] = { { 0 } };
   firstAnimation[1][0] = 1;

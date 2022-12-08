@@ -41,9 +41,6 @@ uint64_t leds = 0xFFFFFFFFFFFFFFFF;
 uint16_t anodes = 0x8000;
 bool latchPinState = 0;
 
-const char* ssid = "Reed's iPhone";
-const char* password = "Silver0!";
-
 typedef enum {RED = 1, GREEN, BLUE, TEAL, PINK} color_state_t;
 color_state_t current_color = RED;
 

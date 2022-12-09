@@ -128,7 +128,7 @@ void BluetoothA2DPCommon::end(bool release_memory) {
     
         // after a release memory - a restart will not be possible
         ESP_LOGI(BT_AV_TAG,"esp_bt_controller_mem_release");
-        if (esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT)!= ESP_OK){
+        if (esp_bt_controller_mem_release(ESP_BT_MODE_BTDM)!= ESP_OK){
             ESP_LOGE(BT_AV_TAG,"esp_bt_controller_mem_release failed");
         }
         log_free_heap();
@@ -323,7 +323,7 @@ bool btStart(){
         while(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE){}
     }
     if(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_INITED){
-        if (esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT)) {
+        if (esp_bt_controller_enable(ESP_BT_MODE_BTDM)) {
             ESP_LOGE(BT_APP_TAG, "BT Enable failed");
             return false;
         }

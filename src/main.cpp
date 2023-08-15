@@ -1,3 +1,4 @@
+
 #include <Arduino.h>
 #include <SPI.h>
 #include <Wire.h>
@@ -5,31 +6,62 @@
 #include <Adafruit_SSD1306.h>
 #include <arduinoFFT.h>
 #include "BluetoothA2DPSink.h"
+#include <HardwareSerial.h>
+// #ifdef CORE_DEBUG_LEVEL
+// #undef CORE_DEBUG_LEVEL
+// #endif
 
+// #define CORE_DEBUG_LEVEL 5
+// #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
 
 BluetoothA2DPSink a2dp_sink;
 
-/*OLED*/
-#define SCL_INDEX 0x00
-#define SCL_TIME 0x01
-#define SCL_FREQUENCY 0x02
-#define SCL_PLOT 0x03
+char cVal = '3';
 
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+// when mixking colors with red we need different rows to take different voltage
+
+// cube specs
+#define ROWS 8
+#define COLUMNS 64
+#define FIRST_ROW 0x8000
+#define ZEROS 0x0000000000000000
+#define ALL_COLUMNS 0xFFFFFFFFFFFFFFFF
+#define TOP_BIT_MASK 0x8000000000000000
+#define ROW1_MASK 0xFF00000000000000
+#define ROW2_MASK 0x00FF000000000000
+#define ROW3_MASK 0x0000FF0000000000
+#define ROW4_MASK 0x000000FF00000000
+#define ROW5_MASK 0x00000000FF000000
+#define ROW6_MASK 0x0000000000FF0000
+#define ROW7_MASK 0x000000000000FF00
+#define ROW8_MASK 0x00000000000000FF
+#define CHARBIT 8
+#define RXp2 16
+#define TXp2 17
 
 // Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 /*****/
+//pins
+int latchPin = 27;
+int clockPin = 26; //26
+int dataPin = 25; // 24
+int dimmingPin = 33;
+
+uint64_t leds = 0xFFFFFFFFFFFFFFFF;
+uint16_t anodes = 0x8000;
+bool latchPinState = 0;
+void (*animation)();
+
+typedef enum {RED = 1, GREEN, BLUE, TEAL, PINK, YELLOW} color_state_t;
+color_state_t current_color = RED;
 
 /*FFT*/
 arduinoFFT FFT = arduinoFFT(); /* Create FFT object */
 
-const uint16_t FFTsamples = 512; //This value MUST ALWAYS be a power of 2
-const double signalFrequency = 1000;
-const double samplingFrequency = 5000;
-const uint8_t amplitude = 175;
+const uint16_t FFTsamples = 1024; //This value MUST ALWAYS be a power of 2 1024
+const double samplingFrequency = 8;
+const uint8_t amplitude = 150;
 
 double vReal[FFTsamples];
 double vImag[FFTsamples];
@@ -39,21 +71,139 @@ int16_t sample_l_int;
 int16_t sample_r_int;
 /*****/
 
-/******Matrix Control******/
-void displayBand(int band, int dsize){
-  int dmax = 50;
-  dsize /= amplitude;
-  if (dsize > dmax) dsize = dmax;
-  for (int s = 0; s <= dsize; s=s+2){display.drawFastHLine(1+10*band,64-s, 8, WHITE);}
-  if (dsize > peak[band]) {peak[band] = dsize;}
+//debug
+__attribute__ ((__noinline__))
+void * get_pc () { return __builtin_return_address(0); }
+
+void dimAnimation(int8_t val = 255) {
+  for(int i=0; i<val; i++){
+    analogWrite(dimmingPin, i);
+    delay(1);
+  }
+  for(int i=val; i>0; i--){
+    analogWrite(dimmingPin, i);
+    delay(1);
+  }
 }
-/************************/
+
+void updateColorState(void){
+  switch(current_color){
+    case RED:
+      current_color = GREEN;
+      break;
+    case GREEN:
+      current_color = BLUE;
+      break;
+    case BLUE:
+      current_color = TEAL;
+      break;
+    case TEAL:
+      current_color = PINK;
+      break;
+    case PINK:
+      current_color = YELLOW;
+      break;
+    case YELLOW:
+      current_color = RED;
+      break;
+  }
+}
+
+void shiftOutAnodes(uint8_t dataPin, uint8_t clockPin, uint8_t bitOrder, uint16_t val)
+{
+      val &= 0xFF00; //mask out the bottom 8 bits(don't need them for 8x8x8 LEB matrix
+      
+      uint8_t i;
+
+      for (i = 0; i < 16; i++)  {
+            if (bitOrder == LSBFIRST)
+                  digitalWrite(dataPin, !!(val & (1 << i)));
+            else      
+                  digitalWrite(dataPin, !!(val & (1 << (15 - i))));
+                  
+            digitalWrite(clockPin, HIGH);
+            digitalWrite(clockPin, LOW);            
+      }
+} 
+
+void _shiftOut64(uint8_t dataPin, uint8_t clockPin, uint8_t bitOrder, uint64_t val)
+{
+      for (int i = 0; i < 64; i++)  {
+            if (bitOrder == LSBFIRST) digitalWrite(dataPin, !!(val & ((uint64_t)1 << i)));
+            else digitalWrite(dataPin, !!(val & ((uint64_t)1 << (63 - i))));
+            digitalWrite(clockPin, HIGH);
+            digitalWrite(clockPin, LOW);   
+      }
+}
+void shiftOut64(uint64_t val) { _shiftOut64(dataPin, clockPin, LSBFIRST, val);}
+
+/// @brief Shift out one instance of 
+/// @param rows Hex of rows ex 0xFF00 is all rows
+/// @param word1 64 bit hex word for blue values
+/// @param word2 64 bit hex word for green values
+/// @param word3 64 bit hex word for red values
+void shiftOut(int rows, int64_t word1, int64_t word2, int64_t word3) {
+  digitalWrite(latchPin, LOW);
+  shiftOutAnodes(dataPin, clockPin, LSBFIRST, rows);
+  shiftOut64(word1);
+  shiftOut64(word2);
+  shiftOut64(word3);
+  digitalWrite(latchPin, HIGH);
+}
+
+/// @brief shifts out a row of one color
+/// @param row rowHex
+/// @param val 64bit value
+/// @param color color of row
+void shiftOut8_Monochrome(int row, int64_t val, color_state_t color) {
+  digitalWrite(latchPin, LOW);
+   shiftOutAnodes(dataPin, clockPin, LSBFIRST, row);
+   
+   switch(color){
+    case RED:
+      shiftOut64(ZEROS);
+      shiftOut64(ZEROS);
+      shiftOut64(val);
+      
+      break;
+    case GREEN:
+      shiftOut64(ZEROS);
+      shiftOut64(val);
+      shiftOut64(ZEROS);
+      break;
+    case BLUE:
+      shiftOut64(val);
+      shiftOut64(ZEROS);
+      shiftOut64(ZEROS);
+      break;
+      case TEAL:
+      shiftOut64(val);
+      shiftOut64(val);
+      shiftOut64(ZEROS);
+      break;
+      case PINK:
+      shiftOut64(val);
+      shiftOut64(ZEROS);
+      shiftOut64(val);
+      break;
+      case YELLOW:
+      shiftOut64(ZEROS);
+      shiftOut64(val);
+      shiftOut64(val);
+      break;
+  }
+   digitalWrite(latchPin, HIGH);
+}
+
+int abs(int n) {
+  int const mask = n >> (sizeof(int) * CHARBIT - 1);
+  return ((n + mask) ^ mask);
+}
 
 void read_data_stream(const uint8_t *data, uint32_t length)
 {
   int16_t *samples = (int16_t*) data;
   uint32_t sample_count = length/2;
-  // Do something with the data packet
  int byteOffset = 0;
     for (int i = 0; i < FFTsamples; i++) {
       sample_l_int = (int16_t)(((*(data + byteOffset + 1) << 8) | *(data + byteOffset)));
@@ -65,9 +215,7 @@ void read_data_stream(const uint8_t *data, uint32_t length)
     
 }
 
-void setup() {
-  Serial.begin(115200);
-  // put your setup code here, to run once:
+void initA2DPBluetooth() {
   static const i2s_config_t i2s_config = {
         .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN),
         .sample_rate = 44100, // corrected by info from bluetooth
@@ -80,97 +228,250 @@ void setup() {
         .use_apll = false
     };
   i2s_pin_config_t my_pin_config = {
-        .bck_io_num = 26,
-        .ws_io_num = 25,
-        .data_out_num = 22,
+        .bck_io_num = 22,
+        .ws_io_num = 23,
+        .data_out_num = 21,
         .data_in_num = I2S_PIN_NO_CHANGE
     };
     a2dp_sink.set_pin_config(my_pin_config);
     a2dp_sink.set_i2s_config(i2s_config);
     a2dp_sink.start("TheMatrix");
     a2dp_sink.set_stream_reader(read_data_stream);
+}
 
-    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
-    Serial.println(F("SSD1306 allocation failed"));
-    for(;;); // Don't proceed, loop forever
+int64_t getColHex(int col) { return 0xFF << (col * 8); }
+
+int getRowHex(int row) { return FIRST_ROW >> (row-1); }
+
+int includeRowsBelow(int row){ return (short)0x8000 >> (row - 1); }
+
+int64_t corners = 0xC3C300000000C3C3;
+bool cornersActive = 1;
+
+void animateFFT(int col, int dsize) {
+  int row = 1;
+  if (dsize == 0) return;
+  // dsize /= amplitude;
+  dsize = abs(dsize);
+  Serial.println(dsize);
+  if (dsize < 100) row =1;
+  else if (dsize < 100) row = 2;
+  else if (dsize < 400) row = 3;
+  else if (dsize < 600) row = 4;
+  else if (dsize < 2000) row = 5;
+  else if (dsize < 5000) row = 6;
+  else if (dsize < 100000) row = 7;
+  else row = 8;
+  color_state_t color = BLUE;
+  if (row >= ROWS) { row = ROWS; }
+  int rowHex = includeRowsBelow(row);
+  int64_t word = getColHex(col);
+  if (cornersActive) word = corners;
+  color = PINK;
+  shiftOut8_Monochrome(rowHex, word, current_color);
+}
+
+int64_t getOneColHex(int col) { return (int64_t)0x1 << col; }
+
+
+
+void shiftOne(int row, int col, color_state_t color) {
+  int rowHex = getRowHex(row);
+  int64_t colHex = getOneColHex(col);
+  
+  shiftOut8_Monochrome(rowHex, colHex, color);
+}
+
+void shiftOneExample() {
+   for (int i=1; i<9; i++) {
+    for (int n=1; n<64; n++) {
+      shiftOne(i, n, (color_state_t)(n%4+1));
+      delay(50);
+    }
   }
 }
 
-void loop() {
+void shiftAllOut() {
+  shiftOut8_Monochrome(0xFF00, ALL_COLUMNS, current_color); //bottom two 0x1100
+}
+
+
+
+void shiftCornersExample() {
+  int64_t four_columns = 0x8100000000000018;
+  for (int i =0; i < 64; i++) {
+    if (TOP_BIT_MASK & four_columns) four_columns += 1;
+    four_columns << i;
+    shiftOut8_Monochrome(0xFF00, four_columns, current_color);
+  }
+//  shiftOne(1, 63, BLUE);
+//   shiftOne(1, 56, BLUE);
+//   shiftOne(1,0, BLUE);
+//   shiftOne(1,7, BLUE);
+}
+
+void shiftOneColumn(int col, color_state_t color, int rows = 0xFF00) {
+  int64_t colHex = getOneColHex(col);
+  shiftOut8_Monochrome(rows, colHex, color);
+}
+
+void shiftOneColumnExample() {
+  shiftOneColumn(0, RED);
+  shiftOneColumn(7, RED);
+  shiftOneColumn(63, RED);
+  shiftOneColumn(56, RED);
+}
+
+
+
+void runFFT() {
   FFT.Windowing(vReal, FFTsamples, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
   FFT.Compute(vReal, vImag, FFTsamples, FFT_FORWARD);
   FFT.ComplexToMagnitude(vReal, vImag, FFTsamples);
-  display.clearDisplay();
-  for(int i = 2; i < (FFTsamples/2); i++)
+  int col = 1;
+  // display.clearDisplay();
+  for(int i = 0; i < (FFTsamples); i++)
   {
-     // Each array element represents a frequency and its value, is the amplitude. Note the frequencies are not discrete.
-      if (i<=2 ) {
-          displayBand(0,(int)vReal[i]); // 125Hz
+    if (i<=2 ) {
+          animateFFT(1, (int)vReal[i]);
       }
       if (i>2 && i<=4 ) {
-          displayBand(1,(int)vReal[i]); // 125Hz
+         animateFFT(2, (int)vReal[i]);
       }   
       if (i>4 && i<=6 ) {
-          displayBand(2,(int)vReal[i]); // 125Hz
+          animateFFT(3, (int)vReal[i]);
       }   
       if (i>6 && i<=15) {
-          displayBand(3,(int)vReal[i]); // 125Hz
+         animateFFT(4, (int)vReal[i]);
       }   
       if (i>15 && i<=30 ) {
-          displayBand(4,(int)vReal[i]); // 125Hz
+          animateFFT(5, (int)vReal[i]);
       }   
       if (i>30 && i<=60) {
-          displayBand(5,(int)vReal[i]); // 125Hz
+          animateFFT(6, (int)vReal[i]);
       }   
       if (i>60 && i<=100 ) {
-          displayBand(6,(int)vReal[i]); // 125Hz
+          animateFFT(7, (int)vReal[i]);
       }   
-      if (i>100 && i<=175 ) {
-          displayBand(7,(int)vReal[i]); // 125Hz
+      if (i>100) {
+          animateFFT(8, (int)vReal[i]);
       }   
-      if (i>175 && i<=225 ) {
-          displayBand(8,(int)vReal[i]); // 125Hz
-      }   
-      if (i>225 && i<=275 ) {
-          displayBand(9,(int)vReal[i]); // 125Hz
-      }   
-      if (i>275 && i<=325 ) {
-          displayBand(10,(int)vReal[i]); // 125Hz
-      }   
-      if (i>325 ) {
-          displayBand(11,(int)vReal[i]); // 125Hz
-      }   
-      // if (i>350 && i<=400 ) {
-      //     displayBand(12,(int)vReal[i]); // 125Hz
-      // }   
-      // if (i>400 && i<=450 ) {
-      //     displayBand(13,(int)vReal[i]); // 125Hz
-      // }   
-      // if (i>450 && i<=500 ) {
-      //     displayBand(14,(int)vReal[i]); // 125Hz
-      // }   
-      // if (i>500) {
-      //     displayBand(15,(int)vReal[i]); // 125Hz
-      // }   
-                  
-      // if (i >2   && i<=4 )   displayBand(1,(int)vReal[i]); // 250Hz
-      // if (i >4   && i<=7 )   displayBand(2,(int)vReal[i]); // 500Hz
-      // if (i >7   && i<=15 )  displayBand(3,(int)vReal[i]); // 1000Hz
-      // if (i >15  && i<=40 )  displayBand(4,(int)vReal[i]); // 2000Hz
-      // if (i >40  && i<=70 )  displayBand(5,(int)vReal[i]); // 4000Hz
-      // if (i >70  && i<=288 ) displayBand(6,(int)vReal[i]); // 8000Hz
-      // if (i >288           ) displayBand(7,(int)vReal[i]); // 16000Hz
-      
-    //   if(i){
-
-    //     }
-    //    Serial.print("Max: ");
-    //    Serial.println(tempi);
-    //    //Serial.println(i);
-    Serial.print((int)vReal[i]);
-    Serial.print(",");
   }
-  display.display();
-  
-  
 }
+
+void _shiftAndDimAllCols(int rowHex, color_state_t color) {
+  shiftOut8_Monochrome(rowHex, ALL_COLUMNS, color);
+  dimAnimation();
+}
+
+void colorGradiant() {
+  color_state_t colors[8] = { 
+    BLUE, BLUE, TEAL, TEAL, GREEN, GREEN, RED, PINK
+    };
+  for (int i =0; i<8; i++) { _shiftAndDimAllCols(0x0100 << i, colors[i]); }
+}
+
+void box() {
+  shiftOut(0xFF00, 0xFF818181818181FF, 0x007E626262627E00, 0x00003C3C3C3C0000);
+}
+//FreeRTOS function that runs the current animation
+void currentAnimation( void * parameter) {
+  while (true)
+  {
+    // Serial.println("Animation Task running");
+    // Serial.printf("%#x\n", get_pc());
+    animation();
+    vTaskDelay(5);
+  }
+}
+void checkColor(char cVal) {
+  if (cVal == 'R') current_color = RED;
+  else if (cVal == 'G') current_color = GREEN;
+  else if (cVal == 'B') current_color = BLUE;
+  else if (cVal == 'T') current_color = TEAL;
+  else if (cVal =='P') current_color = PINK;
+  else if (cVal = 'Y') current_color = YELLOW;
+}
+
+void fillerAnimation() { 
+  shiftOut8_Monochrome(0xFF00, 0x00008181000000000, current_color);
+   }
+
+void colorCycleAnimation() {
+  for (int i = 1; i< 7; i++) {
+    shiftOut8_Monochrome(0xFF00, 0xAAAAAAAAAAAAAAAA, (color_state_t)(i));
+    delay(500);
+  }
+}
+
+//TODO: fix this
+void sineWaveAnimation() {
+  int rownoise[] = {3,4,5,6,7,8,7,6,5,4,3,2,1,1,2,3,4,5,6,7,8};
+  int col = 1;
+  int row = 1;
+  for (int i = 1; i < 18; i++) {
+    col = (i > 9) ? i / 2 : i;
+    row = getRowHex(rownoise[i]);
+    row = includeRowsBelow(row);
+    shiftOneColumn(i, current_color, row);
+    delay(20);
+  }
+}
+
+void checkAnimation(int8_t val) {
+  switch (val) {
+    case 0x31:
+    // Serial.println("BOX set");
+    animation = &box;
+    break;
+    case 0x32:
+    // Serial.println("Corners set");
+    animation = &colorCycleAnimation;
+    break;
+    case 0x33:
+    // Serial.println("FFT set");
+    animation = &runFFT;
+    break;
+    case 0x34:
+    animation = &colorGradiant;
+    break;
+    case 0x35:
+    animation = &shiftOneExample;
+    break;
+    case 0x36:
+    animation = &sineWaveAnimation;
+    break;
+  }
+}
+
+void readSerialInputTask() {
+  // blVal = pCharacteristic->getValue();
+cVal = Serial2.readStringUntil('\n')[0];
+// Serial.printf("char %c\n", cVal);
+int8_t val = cVal;
+Serial.printf("hex: %x\n", val);
+
+//if the hex part of the alphabet then cheange color
+if (val > 0x40) checkColor(cVal);
+else checkAnimation(val);
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial2.begin(9600, SERIAL_8N1, RXp2, TXp2);
+  // put your setup code here, to run once:
+  initA2DPBluetooth();
+    // set starting animation
+  animation = &box;
+  
+  
+
+  xTaskCreate(currentAnimation, "Current_Anmiation", 50000, NULL, 0, NULL);
+
+  pinMode(latchPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);  
+  pinMode(clockPin, OUTPUT);
+  pinMode(dimmingPin, OUTPUT);
+}
+
+void loop() { readSerialInputTask(); }

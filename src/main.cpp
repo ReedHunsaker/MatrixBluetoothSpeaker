@@ -27,6 +27,14 @@ char cVal = '3';
 #define ZEROS 0x0000000000000000
 #define ALL_COLUMNS 0xFFFFFFFFFFFFFFFF
 #define TOP_BIT_MASK 0x8000000000000000
+#define ROW1_MASK 0xFF00000000000000
+#define ROW2_MASK 0x00FF000000000000
+#define ROW3_MASK 0x0000FF0000000000
+#define ROW4_MASK 0x000000FF00000000
+#define ROW5_MASK 0x00000000FF000000
+#define ROW6_MASK 0x0000000000FF0000
+#define ROW7_MASK 0x000000000000FF00
+#define ROW8_MASK 0x00000000000000FF
 #define CHARBIT 8
 #define RXp2 16
 #define TXp2 17
@@ -53,7 +61,7 @@ arduinoFFT FFT = arduinoFFT(); /* Create FFT object */
 
 const uint16_t FFTsamples = 1024; //This value MUST ALWAYS be a power of 2 1024
 const double samplingFrequency = 8;
-const uint8_t amplitude = 180;
+const uint8_t amplitude = 150;
 
 double vReal[FFTsamples];
 double vImag[FFTsamples];
@@ -177,10 +185,12 @@ void shiftOut8_Monochrome(int row, int64_t val, color_state_t color) {
       shiftOut64(val);
       shiftOut64(ZEROS);
       shiftOut64(val);
+      break;
       case YELLOW:
-      shiftOut64(val);
-      shiftOut64(val);
       shiftOut64(ZEROS);
+      shiftOut64(val);
+      shiftOut64(val);
+      break;
   }
    digitalWrite(latchPin, HIGH);
 }
@@ -218,8 +228,8 @@ void initA2DPBluetooth() {
         .use_apll = false
     };
   i2s_pin_config_t my_pin_config = {
-        .bck_io_num = 19,
-        .ws_io_num = 22,
+        .bck_io_num = 22,
+        .ws_io_num = 23,
         .data_out_num = 21,
         .data_in_num = I2S_PIN_NO_CHANGE
     };
@@ -229,38 +239,6 @@ void initA2DPBluetooth() {
     a2dp_sink.set_stream_reader(read_data_stream);
 }
 
-void box() {
-  // shiftOut8_Monochrome(0xFF00, 0xFF818181818181FF, current_color);
-  shiftOut(0xFF00, 0xFF818181818181FF, 0x007E626262627E00, 0x00003C3C3C3C0000);
-}
-//FreeRTOS function that runs the current animation
-void currentAnimation( void * parameter) {
-  while (true)
-  {
-    // Serial.println("Animation Task running");
-    // Serial.printf("%#x\n", get_pc());
-    animation();
-  }
-}
-
-void setup() {
-  Serial.begin(115200);
-  Serial2.begin(9600, SERIAL_8N1, RXp2, TXp2);
-  // put your setup code here, to run once:
-  initA2DPBluetooth();
-    // set starting animation
-  animation = &box;
-  
-  
-
-  xTaskCreate(currentAnimation, "Current_Anmiation", 50000, NULL, 0, NULL);
-
-  pinMode(latchPin, OUTPUT);
-  pinMode(dataPin, OUTPUT);  
-  pinMode(clockPin, OUTPUT);
-  pinMode(dimmingPin, OUTPUT);
-}
-
 int64_t getColHex(int col) { return 0xFF << (col * 8); }
 
 int getRowHex(int row) { return FIRST_ROW >> (row-1); }
@@ -268,21 +246,21 @@ int getRowHex(int row) { return FIRST_ROW >> (row-1); }
 int includeRowsBelow(int row){ return (short)0x8000 >> (row - 1); }
 
 int64_t corners = 0xC3C300000000C3C3;
-bool cornersActive = 0;
+bool cornersActive = 1;
 
 void animateFFT(int col, int dsize) {
   int row = 1;
   if (dsize == 0) return;
-  dsize /= amplitude;
+  // dsize /= amplitude;
   dsize = abs(dsize);
-  
-  if (dsize < 10) row =1;
+  Serial.println(dsize);
+  if (dsize < 100) row =1;
   else if (dsize < 100) row = 2;
-  else if (dsize < 500) row = 3;
-  else if (dsize < 1000) row = 4;
-  else if (dsize < 10000) row = 5;
-  else if (dsize < 100000) row = 6;
-  else if (dsize < 1000000) row = 7;
+  else if (dsize < 400) row = 3;
+  else if (dsize < 600) row = 4;
+  else if (dsize < 2000) row = 5;
+  else if (dsize < 5000) row = 6;
+  else if (dsize < 100000) row = 7;
   else row = 8;
   color_state_t color = BLUE;
   if (row >= ROWS) { row = ROWS; }
@@ -290,7 +268,7 @@ void animateFFT(int col, int dsize) {
   int64_t word = getColHex(col);
   if (cornersActive) word = corners;
   color = PINK;
-  shiftOut8_Monochrome(rowHex, word, color);
+  shiftOut8_Monochrome(rowHex, word, current_color);
 }
 
 int64_t getOneColHex(int col) { return (int64_t)0x1 << col; }
@@ -314,17 +292,7 @@ void shiftOneExample() {
 }
 
 void shiftAllOut() {
-  for (int i = 0; i <64; i ++) {
-    shiftOut8_Monochrome(0xFF00, ALL_COLUMNS << i, current_color); //bottom two 0x1100
-    // delay(20);
-    // shiftOut8_Monochrome(0x3000, ALL_COLUMNS << i+2, current_color); //middle two 0x0011
-    // delay(20);
-    // shiftOut8_Monochrome(0x0C00, ALL_COLUMNS << i+3, current_color);// middle top two 0x1100
-    // delay(20);
-    // shiftOut8_Monochrome(0x0300, ALL_COLUMNS << i +4, current_color);// top two 0x0011
-    // delay(20);
-    delay(50);
-  }
+  shiftOut8_Monochrome(0xFF00, ALL_COLUMNS, current_color); //bottom two 0x1100
 }
 
 
@@ -364,13 +332,36 @@ void runFFT() {
   // display.clearDisplay();
   for(int i = 0; i < (FFTsamples); i++)
   {
-    col = (i % 8) + 1;
-    animateFFT(col, (int)vReal[i]);
+    if (i<=2 ) {
+          animateFFT(1, (int)vReal[i]);
+      }
+      if (i>2 && i<=4 ) {
+         animateFFT(2, (int)vReal[i]);
+      }   
+      if (i>4 && i<=6 ) {
+          animateFFT(3, (int)vReal[i]);
+      }   
+      if (i>6 && i<=15) {
+         animateFFT(4, (int)vReal[i]);
+      }   
+      if (i>15 && i<=30 ) {
+          animateFFT(5, (int)vReal[i]);
+      }   
+      if (i>30 && i<=60) {
+          animateFFT(6, (int)vReal[i]);
+      }   
+      if (i>60 && i<=100 ) {
+          animateFFT(7, (int)vReal[i]);
+      }   
+      if (i>100) {
+          animateFFT(8, (int)vReal[i]);
+      }   
   }
 }
 
 void _shiftAndDimAllCols(int rowHex, color_state_t color) {
   shiftOut8_Monochrome(rowHex, ALL_COLUMNS, color);
+  dimAnimation();
 }
 
 void colorGradiant() {
@@ -378,9 +369,21 @@ void colorGradiant() {
     BLUE, BLUE, TEAL, TEAL, GREEN, GREEN, RED, PINK
     };
   for (int i =0; i<8; i++) { _shiftAndDimAllCols(0x0100 << i, colors[i]); }
-  dimAnimation();
 }
 
+void box() {
+  shiftOut(0xFF00, 0xFF818181818181FF, 0x007E626262627E00, 0x00003C3C3C3C0000);
+}
+//FreeRTOS function that runs the current animation
+void currentAnimation( void * parameter) {
+  while (true)
+  {
+    // Serial.println("Animation Task running");
+    // Serial.printf("%#x\n", get_pc());
+    animation();
+    vTaskDelay(5);
+  }
+}
 void checkColor(char cVal) {
   if (cVal == 'R') current_color = RED;
   else if (cVal == 'G') current_color = GREEN;
@@ -390,7 +393,30 @@ void checkColor(char cVal) {
   else if (cVal = 'Y') current_color = YELLOW;
 }
 
+void fillerAnimation() { 
+  shiftOut8_Monochrome(0xFF00, 0x00008181000000000, current_color);
+   }
 
+void colorCycleAnimation() {
+  for (int i = 1; i< 7; i++) {
+    shiftOut8_Monochrome(0xFF00, 0xAAAAAAAAAAAAAAAA, (color_state_t)(i));
+    delay(500);
+  }
+}
+
+//TODO: fix this
+void sineWaveAnimation() {
+  int rownoise[] = {3,4,5,6,7,8,7,6,5,4,3,2,1,1,2,3,4,5,6,7,8};
+  int col = 1;
+  int row = 1;
+  for (int i = 1; i < 18; i++) {
+    col = (i > 9) ? i / 2 : i;
+    row = getRowHex(rownoise[i]);
+    row = includeRowsBelow(row);
+    shiftOneColumn(i, current_color, row);
+    delay(20);
+  }
+}
 
 void checkAnimation(int8_t val) {
   switch (val) {
@@ -400,7 +426,7 @@ void checkAnimation(int8_t val) {
     break;
     case 0x32:
     // Serial.println("Corners set");
-    animation = &shiftOneExample;
+    animation = &colorCycleAnimation;
     break;
     case 0x33:
     // Serial.println("FFT set");
@@ -410,27 +436,42 @@ void checkAnimation(int8_t val) {
     animation = &colorGradiant;
     break;
     case 0x35:
-    cornersActive = (cornersActive) ? 0 : 1;
+    animation = &shiftOneExample;
     break;
     case 0x36:
-    animation = &shiftAllOut;
+    animation = &sineWaveAnimation;
     break;
   }
 }
 
-
-
-void loop() {
+void readSerialInputTask() {
   // blVal = pCharacteristic->getValue();
-  cVal = Serial2.readStringUntil('\n')[0];
-  // Serial.printf("char %c\n", cVal);
-  int8_t val = cVal;
-  // Serial.println(blVal.c_str());
-  // Serial.printf("hex: %x\n", val);
-  
-  //if the hex part of the alphabet then cheange color
-  if (val > 0x40) checkColor(cVal);
-  else checkAnimation(val);
+cVal = Serial2.readStringUntil('\n')[0];
+// Serial.printf("char %c\n", cVal);
+int8_t val = cVal;
+Serial.printf("hex: %x\n", val);
 
-  
+//if the hex part of the alphabet then cheange color
+if (val > 0x40) checkColor(cVal);
+else checkAnimation(val);
 }
+
+void setup() {
+  Serial.begin(115200);
+  Serial2.begin(9600, SERIAL_8N1, RXp2, TXp2);
+  // put your setup code here, to run once:
+  initA2DPBluetooth();
+    // set starting animation
+  animation = &box;
+  
+  
+
+  xTaskCreate(currentAnimation, "Current_Anmiation", 50000, NULL, 0, NULL);
+
+  pinMode(latchPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);  
+  pinMode(clockPin, OUTPUT);
+  pinMode(dimmingPin, OUTPUT);
+}
+
+void loop() { readSerialInputTask(); }
